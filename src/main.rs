@@ -90,7 +90,7 @@ async fn main() -> io::Result<()> {
                 }
                 Event::Tick => {}
                 Event::RepoUpdated(status) => {
-                    app.update_repo(status);
+                    app.update_repo(*status);
                 }
                 Event::ScanComplete => {
                     app.scanning = false;

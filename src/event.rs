@@ -8,7 +8,7 @@ pub enum Event {
     Key(KeyEvent),
     Mouse(MouseEvent),
     Tick,
-    RepoUpdated(RepoStatus),
+    RepoUpdated(Box<RepoStatus>),
     ScanComplete,
 }
 
@@ -25,10 +25,8 @@ pub fn spawn_event_reader(tx: mpsc::UnboundedSender<Event>, tick_rate_ms: u64) {
                     return;
                 }
             }
-        } else {
-            if tx.send(Event::Tick).is_err() {
-                return;
-            }
+        } else if tx.send(Event::Tick).is_err() {
+            return;
         }
     });
 }

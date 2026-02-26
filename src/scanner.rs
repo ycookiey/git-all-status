@@ -35,7 +35,7 @@ pub async fn scan_all_parallel(
             let status =
                 tokio::task::spawn_blocking(move || git::get_repo_status(&path)).await;
             if let Ok(Some(status)) = status {
-                let _ = tx.send(Event::RepoUpdated(status));
+                let _ = tx.send(Event::RepoUpdated(Box::new(status)));
             }
         }));
     }
@@ -98,7 +98,7 @@ fn walk_for_repos(
             continue;
         }
 
-        if exclude.iter().any(|e| dir_name == *e) {
+        if exclude.contains(&dir_name) {
             continue;
         }
 
