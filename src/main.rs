@@ -1,4 +1,5 @@
 mod app;
+mod cache;
 mod config;
 mod event;
 mod git;
@@ -9,6 +10,7 @@ mod ui;
 use app::{ActivePane, App, InputMode};
 use config::Config;
 use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::EnableMouseCapture;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -23,6 +25,7 @@ async fn main() -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     stdout.execute(EnterAlternateScreen)?;
+    stdout.execute(EnableMouseCapture)?;
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
 
@@ -37,13 +40,11 @@ async fn main() -> io::Result<()> {
         }
     };
 
-    // Initial scan if config is available
-    if let Some(ref cfg) = config {
-        app.scanning = true;
-        let repos = scanner::scan_all(cfg);
-        app.set_repos(repos);
-        app.scanning = false;
-        app.last_scan_time = Some(chrono::Local::now().format("%H:%M:%S").to_string());
+    // Load cache for instant display
+    if config.is_some() {
+        if let Some(cached) = cache::load_cache() {
+            app.load_from_cache(cached);
+        }
     }
 
     // Set up event channel
@@ -52,19 +53,21 @@ async fn main() -> io::Result<()> {
     // Spawn crossterm event reader
     event::spawn_event_reader(tx.clone(), 250);
 
+    // Spawn initial background scan
+    if let Some(ref cfg) = config {
+        app.scanning = true;
+        spawn_scan(cfg, &tx, &app.repos);
+    }
+
     // Spawn periodic background scan
-    if let Some(cfg) = config {
+    if let Some(ref cfg) = config {
         let interval = cfg.interval_secs;
         let scan_tx = tx.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
-                let cfg_clone = Config::load();
-                if let Ok(cfg) = cfg_clone {
-                    let repos = tokio::task::spawn_blocking(move || scanner::scan_all(&cfg))
-                        .await
-                        .unwrap_or_default();
-                    let _ = scan_tx.send(Event::ScanComplete(repos));
+                if let Ok(cfg) = Config::load() {
+                    scanner::scan_all_parallel(&cfg, scan_tx.clone(), &[]).await;
                 }
             }
         });
@@ -72,23 +75,29 @@ async fn main() -> io::Result<()> {
 
     // Main loop
     loop {
-        terminal.draw(|f| ui::draw(f, &app))?;
+        terminal.draw(|f| ui::draw(f, &mut app))?;
 
         if let Some(event) = rx.recv().await {
             match event {
                 Event::Key(key) => {
-                    // Only handle key press events (not release/repeat)
                     if key.kind != KeyEventKind::Press {
                         continue;
                     }
                     handle_key(&mut app, key.code, key.modifiers, &tx);
                 }
+                Event::Mouse(mouse) => {
+                    handle_mouse(&mut app, mouse);
+                }
                 Event::Tick => {}
-                Event::ScanComplete(repos) => {
-                    app.set_repos(repos);
+                Event::RepoUpdated(status) => {
+                    app.update_repo(status);
+                }
+                Event::ScanComplete => {
                     app.scanning = false;
                     app.last_scan_time =
                         Some(chrono::Local::now().format("%H:%M:%S").to_string());
+                    // Save cache with fresh data
+                    let _ = cache::save_cache(&app.repos);
                 }
             }
         }
@@ -100,9 +109,23 @@ async fn main() -> io::Result<()> {
 
     // Restore terminal
     disable_raw_mode()?;
+    terminal.backend_mut().execute(crossterm::event::DisableMouseCapture)?;
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
 
     Ok(())
+}
+
+fn spawn_scan(
+    cfg: &Config,
+    tx: &mpsc::UnboundedSender<Event>,
+    cached_repos: &[types::RepoStatus],
+) {
+    let scan_tx = tx.clone();
+    let cfg_clone = cfg.clone();
+    let cached: Vec<types::RepoStatus> = cached_repos.to_vec();
+    tokio::spawn(async move {
+        scanner::scan_all_parallel(&cfg_clone, scan_tx, &cached).await;
+    });
 }
 
 fn handle_key(
@@ -111,6 +134,15 @@ fn handle_key(
     modifiers: KeyModifiers,
     tx: &mpsc::UnboundedSender<Event>,
 ) {
+    // Handle help overlay
+    if app.show_help {
+        match code {
+            KeyCode::Char('?') | KeyCode::Esc => app.show_help = false,
+            _ => {}
+        }
+        return;
+    }
+
     // Handle search mode input
     if app.input_mode == InputMode::Search {
         match code {
@@ -121,7 +153,6 @@ fn handle_key(
             }
             KeyCode::Enter => {
                 app.input_mode = InputMode::Normal;
-                // Keep the search query active
             }
             KeyCode::Backspace => {
                 app.search_query.pop();
@@ -154,6 +185,32 @@ fn handle_key(
                 app.detail_scroll = app.detail_scroll.saturating_sub(1);
             }
         },
+        // Page navigation
+        KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => match app.active_pane {
+            ActivePane::RepoList => app.move_down_n(app.list_height / 2),
+            ActivePane::Detail => {
+                app.detail_scroll = app.detail_scroll.saturating_add(app.list_height / 2);
+            }
+        },
+        KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => match app.active_pane {
+            ActivePane::RepoList => app.move_up_n(app.list_height / 2),
+            ActivePane::Detail => {
+                app.detail_scroll = app.detail_scroll.saturating_sub(app.list_height / 2);
+            }
+        },
+        KeyCode::Char('f') if modifiers.contains(KeyModifiers::CONTROL) => match app.active_pane {
+            ActivePane::RepoList => app.move_down_n(app.list_height),
+            ActivePane::Detail => {
+                app.detail_scroll = app.detail_scroll.saturating_add(app.list_height);
+            }
+        },
+        KeyCode::Char('b') if modifiers.contains(KeyModifiers::CONTROL) => match app.active_pane {
+            ActivePane::RepoList => app.move_up_n(app.list_height),
+            ActivePane::Detail => {
+                app.detail_scroll = app.detail_scroll.saturating_sub(app.list_height);
+            }
+        },
+
         KeyCode::Char('g') => {
             if app.active_pane == ActivePane::RepoList {
                 app.selected = 0;
@@ -182,6 +239,27 @@ fn handle_key(
         // Dirty filter
         KeyCode::Char('f') => app.toggle_dirty_filter(),
 
+        // Copy path to clipboard
+        KeyCode::Char('c') => {
+            if let Some(repo) = app.selected_repo() {
+                let path_str = repo.path.display().to_string();
+                let copied = copy_to_clipboard(&path_str);
+                app.flash_message = Some((
+                    if copied {
+                        format!("Copied: {}", path_str)
+                    } else {
+                        "Failed to copy to clipboard".to_string()
+                    },
+                    std::time::Instant::now(),
+                ));
+            }
+        }
+
+        // Help
+        KeyCode::Char('?') => {
+            app.show_help = true;
+        }
+
         // Search
         KeyCode::Char('/') => {
             app.input_mode = InputMode::Search;
@@ -190,23 +268,19 @@ fn handle_key(
 
         // Refresh
         KeyCode::Char('r') => {
-            let scan_tx = tx.clone();
-            app.scanning = true;
-            tokio::spawn(async move {
-                if let Ok(cfg) = Config::load() {
-                    let repos = tokio::task::spawn_blocking(move || scanner::scan_all(&cfg))
-                        .await
-                        .unwrap_or_default();
-                    let _ = scan_tx.send(Event::ScanComplete(repos));
-                }
-            });
+            if let Ok(cfg) = Config::load() {
+                app.scanning = true;
+                spawn_scan(&cfg, tx, &app.repos);
+            }
         }
 
         // Open lazygit
         KeyCode::Enter => {
             if let Some(repo) = app.selected_repo() {
                 let path = repo.path.clone();
-                launch_external(path.to_string_lossy().as_ref());
+                if let Err(msg) = launch_external(path.to_string_lossy().as_ref()) {
+                    app.flash_message = Some((msg, std::time::Instant::now()));
+                }
             }
         }
 
@@ -214,22 +288,118 @@ fn handle_key(
     }
 }
 
-fn launch_external(path: &str) {
-    // Temporarily leave alternate screen and disable raw mode
+fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
+    use crossterm::event::{MouseEventKind, MouseButton};
+
+    let (lx, ly, _lw, lh) = app.repo_list_area;
+    // Content starts at ly+2 (border + header row)
+    let content_y = ly + 2;
+    let content_end = ly + lh.saturating_sub(1); // exclude bottom border
+
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            if mouse.row >= content_y && mouse.row < content_end && mouse.column >= lx {
+                let row_idx = (mouse.row - content_y) as usize;
+                if row_idx < app.filtered_indices.len() {
+                    app.active_pane = ActivePane::RepoList;
+                    app.selected = row_idx;
+                    app.detail_scroll = 0;
+                }
+            }
+        }
+        MouseEventKind::ScrollUp => {
+            match app.active_pane {
+                ActivePane::RepoList => app.move_up(),
+                ActivePane::Detail => {
+                    app.detail_scroll = app.detail_scroll.saturating_sub(3);
+                }
+            }
+        }
+        MouseEventKind::ScrollDown => {
+            match app.active_pane {
+                ActivePane::RepoList => app.move_down(),
+                ActivePane::Detail => {
+                    app.detail_scroll = app.detail_scroll.saturating_add(3);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn launch_external(path: &str) -> Result<(), String> {
     let _ = disable_raw_mode();
     let _ = io::stdout().execute(LeaveAlternateScreen);
 
-    // Try lazygit first
     let result = std::process::Command::new("lazygit")
         .current_dir(path)
         .status();
 
-    if result.is_err() {
-        eprintln!("lazygit not found. Install lazygit to use this feature.");
-        std::thread::sleep(std::time::Duration::from_secs(2));
-    }
-
-    // Restore terminal
     let _ = enable_raw_mode();
     let _ = io::stdout().execute(EnterAlternateScreen);
+
+    match result {
+        Ok(status) if status.success() => Ok(()),
+        Ok(_) => Ok(()), // lazygit exited non-zero but ran fine
+        Err(_) => Err("lazygit not found. Install: https://github.com/jesseduffield/lazygit".to_string()),
+    }
+}
+
+fn copy_to_clipboard(text: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::{Command, Stdio};
+        if let Ok(mut child) = Command::new("clip")
+            .stdin(Stdio::piped())
+            .spawn()
+        {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            return child.wait().map(|s| s.success()).unwrap_or(false);
+        }
+        false
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::{Command, Stdio};
+        if let Ok(mut child) = Command::new("pbcopy")
+            .stdin(Stdio::piped())
+            .spawn()
+        {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            return child.wait().map(|s| s.success()).unwrap_or(false);
+        }
+        false
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::{Command, Stdio};
+        // Try xclip first, then xsel
+        for cmd in &["xclip", "xsel"] {
+            let args: Vec<&str> = if *cmd == "xclip" {
+                vec!["-selection", "clipboard"]
+            } else {
+                vec!["--clipboard", "--input"]
+            };
+            if let Ok(mut child) = Command::new(cmd)
+                .args(&args)
+                .stdin(Stdio::piped())
+                .spawn()
+            {
+                use std::io::Write;
+                if let Some(ref mut stdin) = child.stdin {
+                    let _ = stdin.write_all(text.as_bytes());
+                }
+                if child.wait().map(|s| s.success()).unwrap_or(false) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }

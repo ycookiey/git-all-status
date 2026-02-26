@@ -4,6 +4,44 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
+use std::path::Path;
+
+struct RecentCommit {
+    hash: String,
+    message: String,
+    time: String,
+}
+
+fn get_recent_commits(path: &Path) -> Option<Vec<RecentCommit>> {
+    let output = std::process::Command::new("git")
+        .args(["log", "--oneline", "-5", "--format=%h\t%s\t%ar"])
+        .current_dir(path)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let commits: Vec<RecentCommit> = text
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.splitn(3, '\t').collect();
+            if parts.len() == 3 {
+                Some(RecentCommit {
+                    hash: parts[0].to_string(),
+                    message: parts[1].to_string(),
+                    time: parts[2].to_string(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if commits.is_empty() { None } else { Some(commits) }
+}
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let is_active = app.active_pane == ActivePane::Detail;
@@ -127,6 +165,28 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         )));
+        lines.push(Line::from(""));
+
+        // Show recent commits for clean repos to fill the space
+        if let Some(recent) = get_recent_commits(&repo.path) {
+            lines.push(Line::from(Span::styled(
+                "── Recent Commits ──",
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+            )));
+            for commit in recent {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  {} ", commit.hash),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::raw(commit.message),
+                    Span::styled(
+                        format!("  ({})", commit.time),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
+            }
+        }
     }
 
     let total_lines = lines.len();

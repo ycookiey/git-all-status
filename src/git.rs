@@ -74,7 +74,7 @@ pub fn get_repo_status(path: &Path) -> Option<RepoStatus> {
     }
 
     // Get last commit info
-    let (last_commit_message, last_commit_time) = get_last_commit(path);
+    let (last_commit_message, last_commit_time, last_commit_epoch) = get_last_commit(path);
 
     let is_dirty = !staged.is_empty() || !unstaged.is_empty() || !untracked.is_empty();
 
@@ -90,10 +90,13 @@ pub fn get_repo_status(path: &Path) -> Option<RepoStatus> {
         behind,
         last_commit_message,
         last_commit_time,
+        last_commit_epoch,
+        stale: false,
     })
 }
 
-fn get_last_commit(path: &Path) -> (String, String) {
+/// Returns (message, relative_time, epoch).
+fn get_last_commit(path: &Path) -> (String, String, i64) {
     let output = Command::new("git")
         .args(["log", "-1", "--format=%s%n%aI"])
         .current_dir(path)
@@ -105,32 +108,34 @@ fn get_last_commit(path: &Path) -> (String, String) {
             let lines: Vec<&str> = text.lines().collect();
             let message = lines.first().unwrap_or(&"").to_string();
             let time_str = lines.get(1).unwrap_or(&"");
-            let relative = format_relative_time(time_str);
-            (message, relative)
+            let (relative, epoch) = format_relative_time(time_str);
+            (message, relative, epoch)
         }
-        _ => ("(no commits)".to_string(), "".to_string()),
+        _ => ("(no commits)".to_string(), String::new(), 0),
     }
 }
 
-fn format_relative_time(iso_str: &str) -> String {
+/// Returns (relative_time_string, epoch_seconds).
+fn format_relative_time(iso_str: &str) -> (String, i64) {
     let dt = match DateTime::<FixedOffset>::parse_from_rfc3339(iso_str) {
         Ok(dt) => dt.with_timezone(&Utc),
-        Err(_) => return iso_str.to_string(),
+        Err(_) => return (iso_str.to_string(), 0),
     };
 
+    let epoch = dt.timestamp();
     let now = Utc::now();
     let duration = now.signed_duration_since(dt);
 
     let secs = duration.num_seconds();
     if secs < 0 {
-        return "just now".to_string();
+        return ("just now".to_string(), epoch);
     }
 
     let minutes = duration.num_minutes();
     let hours = duration.num_hours();
     let days = duration.num_days();
 
-    if secs < 60 {
+    let relative = if secs < 60 {
         "just now".to_string()
     } else if minutes < 60 {
         format!("{}m ago", minutes)
@@ -142,5 +147,7 @@ fn format_relative_time(iso_str: &str) -> String {
         format!("{}mo ago", days / 30)
     } else {
         format!("{}y ago", days / 365)
-    }
+    };
+
+    (relative, epoch)
 }

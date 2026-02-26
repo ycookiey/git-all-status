@@ -2,6 +2,11 @@
 name = "git-all-status"
 version = "0.1.0"
 edition = "2021"
+description = "TUI dashboard to monitor git status across multiple repositories"
+license = "MIT"
+repository = "https://github.com/ycookiey/git-all-status"
+keywords = ["git", "tui", "dashboard", "status", "ratatui"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 ratatui = "0.29"
@@ -11,3 +16,4 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 dirs = "6"
 chrono = "0.4"
+serde_json = "1"

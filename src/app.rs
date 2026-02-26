@@ -33,6 +33,10 @@ pub struct App {
     pub scanning: bool,
     pub last_scan_time: Option<String>,
     pub config_error: Option<String>,
+    pub list_height: usize, // visible rows in repo list (updated each frame)
+    pub show_help: bool,
+    pub flash_message: Option<(String, std::time::Instant)>,
+    pub repo_list_area: (u16, u16, u16, u16), // (x, y, width, height) for mouse hit testing
 }
 
 impl App {
@@ -51,6 +55,10 @@ impl App {
             scanning: false,
             last_scan_time: None,
             config_error: None,
+            list_height: 20,
+            show_help: false,
+            flash_message: None,
+            repo_list_area: (0, 0, 0, 0),
         }
     }
 
@@ -78,15 +86,12 @@ impl App {
             let ra = &repos[a];
             let rb = &repos[b];
             match sort_mode {
-                SortMode::DirtyFirst => {
-                    rb.is_dirty.cmp(&ra.is_dirty).then(ra.name.cmp(&rb.name))
-                }
+                SortMode::DirtyFirst => rb
+                    .is_dirty
+                    .cmp(&ra.is_dirty)
+                    .then(rb.last_commit_epoch.cmp(&ra.last_commit_epoch)),
                 SortMode::Name => ra.name.cmp(&rb.name),
-                SortMode::LastCommit => {
-                    // Compare by last_commit_time string (reverse for most recent first)
-                    // This is a rough sort; exact sorting would require storing the timestamp
-                    ra.last_commit_time.cmp(&rb.last_commit_time)
-                }
+                SortMode::LastCommit => rb.last_commit_epoch.cmp(&ra.last_commit_epoch),
             }
         });
 
@@ -120,6 +125,18 @@ impl App {
         }
     }
 
+    pub fn move_up_n(&mut self, n: usize) {
+        self.selected = self.selected.saturating_sub(n);
+        self.detail_scroll = 0;
+    }
+
+    pub fn move_down_n(&mut self, n: usize) {
+        if !self.filtered_indices.is_empty() {
+            self.selected = (self.selected + n).min(self.filtered_indices.len() - 1);
+            self.detail_scroll = 0;
+        }
+    }
+
     pub fn toggle_sort(&mut self) {
         self.sort_mode = match self.sort_mode {
             SortMode::DirtyFirst => SortMode::Name,
@@ -137,5 +154,27 @@ impl App {
     pub fn set_repos(&mut self, repos: Vec<RepoStatus>) {
         self.repos = repos;
         self.update_filtered();
+    }
+
+    /// Load cached repos with stale=true.
+    pub fn load_from_cache(&mut self, mut repos: Vec<RepoStatus>) {
+        for r in &mut repos {
+            r.stale = true;
+        }
+        self.set_repos(repos);
+    }
+
+    /// Update a single repo by path match, or add if new.
+    pub fn update_repo(&mut self, status: RepoStatus) {
+        if let Some(pos) = self.repos.iter().position(|r| r.path == status.path) {
+            self.repos[pos] = status;
+        } else {
+            self.repos.push(status);
+        }
+        self.update_filtered();
+    }
+
+    pub fn stale_count(&self) -> usize {
+        self.repos.iter().filter(|r| r.stale).count()
     }
 }
