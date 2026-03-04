@@ -1,10 +1,10 @@
 [package]
-name = "git-all-status"
+name = "dirtygit"
 version = "0.2.1"
 edition = "2021"
 description = "TUI dashboard to monitor git status across multiple repositories"
 license = "MIT"
-repository = "https://github.com/ycookiey/git-all-status"
+repository = "https://github.com/ycookiey/dirtygit"
 keywords = ["git", "tui", "dashboard", "status", "ratatui"]
 categories = ["command-line-utilities", "development-tools"]
 

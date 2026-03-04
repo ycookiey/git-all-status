@@ -265,7 +265,7 @@ fn draw_help_overlay(f: &mut Frame) {
 
 fn draw_config_error(f: &mut Frame, error: &str) {
     let block = Block::default()
-        .title(" git-all-status - Configuration Required ")
+        .title(" dirtygit - Configuration Required ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow));
 

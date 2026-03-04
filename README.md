@@ -1,4 +1,4 @@
-# git-all-status
+# dirtygit
 
 TUI dashboard to monitor git status across multiple repositories.
 
@@ -20,24 +20,24 @@ TUI dashboard to monitor git status across multiple repositories.
 
 ### GitHub Releases
 
-Download a pre-built binary from [Releases](https://github.com/ycookiey/git-all-status/releases).
+Download a pre-built binary from [Releases](https://github.com/ycookiey/dirtygit/releases).
 
 ### Scoop (Windows)
 
 ```
 scoop bucket add yscoopy https://github.com/ycookiey/yscoopy
-scoop install git-all-status
+scoop install dirtygit
 ```
 
 ### Build from source
 
 ```
-cargo install --git https://github.com/ycookiey/git-all-status
+cargo install --git https://github.com/ycookiey/dirtygit
 ```
 
 ## Configuration
 
-Create `~/.config/git-all-status/config.toml` (on Windows: `%APPDATA%\git-all-status\config.toml`):
+Create `~/.config/dirtygit/config.toml` (on Windows: `%APPDATA%\dirtygit\config.toml`):
 
 ```toml
 scan_dirs = [

@@ -40,7 +40,7 @@ impl Config {
     pub fn config_path() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("git-all-status")
+            .join("dirtygit")
             .join("config.toml")
     }
 
@@ -50,7 +50,7 @@ impl Config {
             return Err(format!(
                 "設定ファイルが見つかりません。{} を作成してください\n\n\
                  サンプル設定:\n\n\
-                 # ~/.config/git-all-status/config.toml\n\
+                 # ~/.config/dirtygit/config.toml\n\
                  scan_dirs = [\n\
                      \"~/projects\",\n\
                      \"~/work\",\n\

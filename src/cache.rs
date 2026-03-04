@@ -6,7 +6,7 @@ use std::path::PathBuf;
 fn cache_path() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("git-all-status")
+        .join("dirtygit")
         .join("cache.json")
 }
 
