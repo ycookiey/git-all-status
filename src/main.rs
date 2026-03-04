@@ -76,10 +76,25 @@ async fn main() -> io::Result<()> {
         });
     }
 
+    // Spawn render timer (30fps)
+    {
+        let render_tx = tx.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(33));
+            loop {
+                interval.tick().await;
+                if render_tx.send(Event::Render).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    // Initial draw
+    terminal.draw(|f| ui::draw(f, &mut app))?;
+
     // Main loop
     loop {
-        terminal.draw(|f| ui::draw(f, &mut app))?;
-
         if let Some(event) = rx.recv().await {
             match event {
                 Event::Key(key) => {
@@ -119,6 +134,9 @@ async fn main() -> io::Result<()> {
                     handle_mouse(&mut app, mouse);
                 }
                 Event::Tick => {}
+                Event::Render => {
+                    terminal.draw(|f| ui::draw(f, &mut app))?;
+                }
                 Event::RepoUpdated(status) => {
                     app.update_repo(*status);
                 }

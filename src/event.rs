@@ -10,6 +10,7 @@ pub enum Event {
     Key(KeyEvent),
     Mouse(MouseEvent),
     Tick,
+    Render,
     RepoUpdated(Box<RepoStatus>),
     ScanComplete,
 }
