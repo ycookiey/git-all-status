@@ -76,7 +76,8 @@ pub fn get_repo_status(path: &Path) -> Option<RepoStatus> {
     // Get last commit info
     let (last_commit_message, last_commit_time, last_commit_epoch) = get_last_commit(path);
 
-    let is_dirty = !staged.is_empty() || !unstaged.is_empty() || !untracked.is_empty();
+    let is_dirty =
+        !staged.is_empty() || !unstaged.is_empty() || !untracked.is_empty() || ahead > 0;
 
     Some(RepoStatus {
         name,

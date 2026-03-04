@@ -16,7 +16,7 @@ use crossterm::terminal::{
 };
 use crossterm::ExecutableCommand;
 use event::Event;
-use std::io;
+use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -377,6 +377,9 @@ fn launch_external(path: &str) {
     let _ = io::stdout().execute(crossterm::event::DisableMouseCapture);
     let _ = io::stdout().execute(LeaveAlternateScreen);
 
+    // Emit OSC 7 so terminal emulators (e.g. WezTerm) track the CWD
+    emit_osc7(path);
+
     let _ = std::process::Command::new("lazygit")
         .current_dir(path)
         .status();
@@ -384,6 +387,37 @@ fn launch_external(path: &str) {
     let _ = enable_raw_mode();
     let _ = io::stdout().execute(EnterAlternateScreen);
     let _ = io::stdout().execute(crossterm::event::EnableMouseCapture);
+}
+
+/// Emit OSC 7 escape sequence to notify the terminal of the current working directory.
+fn emit_osc7(path: &str) {
+    let canonical = std::path::Path::new(path)
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(path));
+    let path_str = canonical.to_string_lossy();
+    // On Windows, strip the \\?\ prefix from canonicalize()
+    let path_str = path_str.strip_prefix(r"\\?\").unwrap_or(&path_str);
+    let encoded = url_encode_path(path_str);
+    let hostname = hostname::get()
+        .map(|h| h.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    print!("\x1b]7;file://{hostname}/{encoded}\x1b\\");
+    let _ = io::stdout().flush();
+}
+
+fn url_encode_path(path: &str) -> String {
+    let mut result = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'/' | b':' => {
+                result.push(byte as char);
+            }
+            _ => {
+                result.push_str(&format!("%{:02X}", byte));
+            }
+        }
+    }
+    result
 }
 
 fn copy_to_clipboard(text: &str) -> bool {
